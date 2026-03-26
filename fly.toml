@@ -1,21 +1,23 @@
-# Đổi `app` thành tên global duy nhất (vd. thinh-chat-api-xyz) rồi: fly deploy
-# Hoặc chạy: fly launch --copy-config (tạo app mới, giữ cấu hình dưới đây)
+# fly.toml app configuration file generated for chat-app-backend-qcvbng on 2026-03-26T11:18:45Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "thinh-chat-backend"
-primary_region = "sin"
+app = 'chat-app-backend-qcvbng'
+primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile"
 
 [http_service]
-  internal_port = 5000
+  internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
 [[vm]]
-  cpu_kind = "shared"
+  memory = '1gb'
+  cpu_kind = 'shared'
   cpus = 1
-  memory = "512mb"
+  memory_mb = 256
