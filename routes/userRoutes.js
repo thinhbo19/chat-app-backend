@@ -1,12 +1,13 @@
 const express = require("express");
-const { searchUsers } = require("../controllers/userController");
+const { browseUsers, searchUsers } = require("../controllers/userController");
 const { requireAuth } = require("../middlewares/authMiddleware");
 const { validate } = require("../middlewares/validate");
-const { searchUsersSchema } = require("../schemas/userSchemas");
+const { browseUsersSchema, searchUsersSchema } = require("../schemas/userSchemas");
 
 const router = express.Router();
 
 router.use(requireAuth);
+router.get("/browse", validate(browseUsersSchema), browseUsers);
 router.get("/search", validate(searchUsersSchema), searchUsers);
 
 module.exports = router;
