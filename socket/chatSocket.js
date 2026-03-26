@@ -16,6 +16,14 @@ function isRoomMember(room, userId) {
   });
 }
 
+/** Chuỗi userId từ phần tử members (ObjectId hoặc populate). */
+function memberUserIdString(member) {
+  if (!member || member.userId == null) return "";
+  const u = member.userId;
+  if (typeof u === "object" && u._id != null) return String(u._id);
+  return String(u);
+}
+
 async function getFriendUserIds(userId) {
   const uid = userId.toString();
   const reqs = await FriendRequest.find({
@@ -142,7 +150,15 @@ function registerChatSocket(io) {
         senderId: { _id: userId, username: socket.data.username },
       });
 
-      io.to(roomId).emit("receive_message", message);
+      const recipientIds = new Set();
+      for (const member of room.members) {
+        const mid = memberUserIdString(member);
+        if (mid) recipientIds.add(mid);
+      }
+      for (const mid of recipientIds) {
+        io.to(`user:${mid}`).emit("receive_message", message);
+        io.to(`user:${mid}`).emit("room_list_changed");
+      }
       callback?.({ ok: true });
     });
 

@@ -35,6 +35,8 @@ Thư mục `uploads/` chứa file chat; các file upload thật được `.gitig
 
 Frontend cần trỏ base URL / Socket tới `https://<app>.fly.dev`.
 
+**Socket.IO:** realtime dùng bộ nhớ trong một process. Nên chạy **một** machine (`fly scale count 1`) hoặc dùng Redis adapter nếu scale > 1.
+
 ## Git
 
 Đây là **một repo Git độc lập** (chỉ backend). Frontend nằm repo `chat-app-frontend`.

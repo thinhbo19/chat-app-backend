@@ -17,6 +17,18 @@ function hasMember(room, userId) {
   });
 }
 
+function emitToRoomMembers(io, room, event, payload) {
+  const ids = new Set();
+  for (const member of room.members) {
+    const u = member.userId;
+    const mid = u == null ? "" : typeof u === "object" && u._id != null ? String(u._id) : String(u);
+    if (mid) ids.add(mid);
+  }
+  for (const mid of ids) {
+    io.to(`user:${mid}`).emit(event, payload);
+  }
+}
+
 async function createRoom(req, res) {
   const { name, memberIds } = req.body;
 
@@ -256,7 +268,7 @@ async function deleteRoomMessage(req, res) {
   const formatted = formatMessageDoc(populated);
 
   const io = req.app.get("io");
-  io.to(roomId).emit("message_updated", formatted);
+  emitToRoomMembers(io, room, "message_updated", formatted);
 
   return res.json({ message: formatted });
 }
@@ -293,7 +305,7 @@ async function markRoomRead(req, res) {
   );
 
   const io = req.app.get("io");
-  io.to(roomId).emit("read_receipt", {
+  emitToRoomMembers(io, room, "read_receipt", {
     roomId,
     userId: req.user.id,
     messageId: String(messageId),
