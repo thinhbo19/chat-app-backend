@@ -1,0 +1,21 @@
+# Đổi `app` thành tên global duy nhất (vd. thinh-chat-api-xyz) rồi: fly deploy
+# Hoặc chạy: fly launch --copy-config (tạo app mới, giữ cấu hình dưới đây)
+
+app = "thinh-chat-backend"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

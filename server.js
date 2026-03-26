@@ -109,8 +109,8 @@ mongoose
     } catch (error) {
       console.warn("RefreshToken.syncIndexes:", error.message);
     }
-    server.listen(PORT, () => {
-      console.log(`Server is running at http://localhost:${PORT}`);
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server is running at http://0.0.0.0:${PORT}`);
     });
   })
   .catch((error) => {
