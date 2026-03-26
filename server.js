@@ -22,7 +22,7 @@ const messageRoutes = require("./routes/messageRoutes");
 const app = express();
 const server = http.createServer(app);
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/chat_app";
+const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT || 5000;
 
 app.use(
