@@ -37,6 +37,8 @@ Frontend cần trỏ base URL / Socket tới `https://<app>.fly.dev`.
 
 **Socket.IO:** realtime dùng bộ nhớ trong một process. Nên chạy **một** machine (`fly scale count 1`) hoặc dùng Redis adapter nếu scale > 1.
 
+**Đừng để máy ngủ nếu cần chat realtime:** Trong `fly.toml`, `auto_stop_machines = "off"` giúp API/WebSocket luôn sẵn sàng; nếu để `"stop"`, lần đầu sau vài phút không traffic có thể chờ rất lâu mới nhận tin.
+
 ## Git
 
 Đây là **một repo Git độc lập** (chỉ backend). Frontend nằm repo `chat-app-frontend`.

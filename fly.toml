@@ -1,7 +1,7 @@
 # Đổi `app` thành tên global duy nhất (vd. thinh-chat-api-xyz) rồi: fly deploy
 # Hoặc chạy: fly launch --copy-config (tạo app mới, giữ cấu hình dưới đây)
 
-app = "thinh-chat-backend"
+app = "chat-app-backend-qcvbng"
 primary_region = "sin"
 
 [build]
@@ -10,7 +10,8 @@ primary_region = "sin"
 [http_service]
   internal_port = 5000
   force_https = true
-  auto_stop_machines = "stop"
+  # "off" = máy luôn chạy — Socket.IO và thông báo không bị trễ khi không có traffic (có thể tốn thêm quota).
+  auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 0
   processes = ["app"]
