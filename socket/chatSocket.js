@@ -4,6 +4,7 @@ const Room = require("../models/Room");
 const User = require("../models/User");
 const FriendRequest = require("../models/FriendRequest");
 const { formatMessageDoc } = require("../utils/formatChatMessage");
+const { markRoomReadAndBroadcast } = require("../services/roomReadService");
 
 const userSocketCounts = new Map();
 
@@ -16,12 +17,15 @@ function isRoomMember(room, userId) {
   });
 }
 
-/** Chuỗi userId từ phần tử members (ObjectId hoặc populate). */
+/** Chuỗi userId từ phần tử members (subdoc, ObjectId, hoặc populate). */
 function memberUserIdString(member) {
-  if (!member || member.userId == null) return "";
-  const u = member.userId;
-  if (typeof u === "object" && u._id != null) return String(u._id);
-  return String(u);
+  if (member == null) return "";
+  if (member.userId != null) {
+    const u = member.userId;
+    if (typeof u === "object" && u._id != null) return String(u._id);
+    return String(u);
+  }
+  return String(member);
 }
 
 async function getFriendUserIds(userId) {
@@ -35,6 +39,27 @@ async function getFriendUserIds(userId) {
   );
 }
 
+/** Mọi userId cần nhận cập nhật presence (bạn bè + mọi thành viên cùng phòng nhóm / direct). */
+async function getPresenceSubscriberIds(userId) {
+  const self = userId.toString();
+  const friendIds = await getFriendUserIds(userId);
+  const oid = new mongoose.Types.ObjectId(self);
+  const rooms = await Room.find({
+    $or: [{ "members.userId": oid }, { members: oid }],
+  })
+    .select("members")
+    .lean();
+
+  const ids = new Set(friendIds);
+  for (const room of rooms) {
+    for (const m of room.members || []) {
+      const mid = memberUserIdString(m);
+      if (mid && mid !== self) ids.add(mid);
+    }
+  }
+  return [...ids];
+}
+
 async function broadcastStatus(io, userId, status) {
   const now = new Date();
   const update =
@@ -42,13 +67,13 @@ async function broadcastStatus(io, userId, status) {
       ? { status, lastSeenAt: now }
       : { status };
   await User.updateOne({ _id: userId }, update);
-  const friendIds = await getFriendUserIds(userId);
+  const subscriberIds = await getPresenceSubscriberIds(userId);
   const payload = {
     userId: userId.toString(),
     status,
     ...(status === "offline" ? { lastSeenAt: now.toISOString() } : {}),
   };
-  for (const fid of friendIds) {
+  for (const fid of subscriberIds) {
     io.to(`user:${fid}`).emit("user_status", payload);
   }
 }
@@ -158,6 +183,25 @@ function registerChatSocket(io) {
       for (const mid of recipientIds) {
         io.to(`user:${mid}`).emit("receive_message", message);
         io.to(`user:${mid}`).emit("room_list_changed");
+      }
+      callback?.({ ok: true });
+    });
+
+    socket.on("mark_room_read", async (payload, callback) => {
+      const roomId = String(payload?.roomId || "").trim();
+      const messageId = payload?.messageId;
+      if (!mongoose.Types.ObjectId.isValid(roomId)) {
+        callback?.({ ok: false, error: "Invalid roomId" });
+        return;
+      }
+      const result = await markRoomReadAndBroadcast(io, {
+        roomId,
+        userIdStr: userId.toString(),
+        messageId,
+      });
+      if (!result.ok) {
+        callback?.({ ok: false, error: result.error || "mark_room_read failed" });
+        return;
       }
       callback?.({ ok: true });
     });

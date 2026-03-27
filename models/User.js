@@ -26,6 +26,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 24,
+    },
     status: {
       type: String,
       enum: ["offline", "online"],

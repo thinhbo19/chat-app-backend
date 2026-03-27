@@ -8,6 +8,13 @@ const roomSchema = new mongoose.Schema(
       trim: true,
       maxlength: 80,
     },
+    /** URL ảnh đại diện nhóm; để trống thì client dùng chữ cái / icon mặc định */
+    avatar: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 500,
+    },
     type: {
       type: String,
       enum: ["group", "direct"],

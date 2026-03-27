@@ -1,5 +1,8 @@
+const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const { sendError } = require("../utils/apiError");
+const { publicUserPayload } = require("../utils/userPublic");
 
 async function searchUsers(req, res) {
   const q = String(req.query.q || "").trim();
@@ -45,4 +48,76 @@ async function browseUsers(req, res) {
   return res.json({ users: slice, nextCursor });
 }
 
-module.exports = { searchUsers, browseUsers };
+async function updateMyProfile(req, res) {
+  const { username, email, phone } = req.body;
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return sendError(res, 404, "USER_NOT_FOUND", "Khong tim thay tai khoan");
+  }
+
+  const nextUsername = String(username).trim();
+  const nextEmail = String(email).toLowerCase().trim();
+  const nextPhone = phone != null ? String(phone).trim().slice(0, 24) : "";
+
+  const nameTaken = await User.findOne({
+    username: nextUsername,
+    _id: { $ne: user._id },
+  }).lean();
+  if (nameTaken) {
+    return sendError(res, 409, "USERNAME_TAKEN", "Ten dang nhap da duoc su dung");
+  }
+
+  const emailTaken = await User.findOne({
+    email: nextEmail,
+    _id: { $ne: user._id },
+  }).lean();
+  if (emailTaken) {
+    return sendError(res, 409, "EMAIL_TAKEN", "Email da duoc su dung");
+  }
+
+  user.username = nextUsername;
+  user.email = nextEmail;
+  user.phone = nextPhone;
+  await user.save();
+
+  return res.json({ user: publicUserPayload(user) });
+}
+
+async function changeMyPassword(req, res) {
+  const { currentPassword, newPassword } = req.body;
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return sendError(res, 404, "USER_NOT_FOUND", "Khong tim thay tai khoan");
+  }
+
+  const ok = await user.comparePassword(currentPassword);
+  if (!ok) {
+    return sendError(res, 403, "WRONG_PASSWORD", "Mat khau hien tai khong dung");
+  }
+
+  user.passwordHash = await bcrypt.hash(String(newPassword), 10);
+  await user.save();
+
+  return res.json({ message: "Da doi mat khau" });
+}
+
+async function updateMyAvatar(req, res) {
+  const { avatar } = req.body;
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return sendError(res, 404, "USER_NOT_FOUND", "Khong tim thay tai khoan");
+  }
+
+  user.avatar = String(avatar).trim().slice(0, 500);
+  await user.save();
+
+  return res.json({ user: publicUserPayload(user) });
+}
+
+module.exports = {
+  searchUsers,
+  browseUsers,
+  updateMyProfile,
+  changeMyPassword,
+  updateMyAvatar,
+};

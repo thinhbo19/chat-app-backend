@@ -1,36 +1,18 @@
 const mongoose = require("mongoose");
 const Room = require("../models/Room");
 const FriendRequest = require("../models/FriendRequest");
+const GroupInvite = require("../models/GroupInvite");
 const User = require("../models/User");
 const { ensureDirectRoomForUsers } = require("../utils/room");
 const Message = require("../models/Message");
 const RoomReadState = require("../models/RoomReadState");
 const { formatMessageDoc } = require("../utils/formatChatMessage");
 const { sendError } = require("../utils/apiError");
-
-function hasMember(room, userId) {
-  return room.members.some((member) => {
-    if (member.userId) {
-      return member.userId.toString() === userId;
-    }
-    return member.toString() === userId;
-  });
-}
-
-function emitToRoomMembers(io, room, event, payload) {
-  const ids = new Set();
-  for (const member of room.members) {
-    const u = member.userId;
-    const mid = u == null ? "" : typeof u === "object" && u._id != null ? String(u._id) : String(u);
-    if (mid) ids.add(mid);
-  }
-  for (const mid of ids) {
-    io.to(`user:${mid}`).emit(event, payload);
-  }
-}
+const { hasMember, emitToRoomMembers } = require("../utils/roomMembers");
+const { markRoomReadAndBroadcast } = require("../services/roomReadService");
 
 async function createRoom(req, res) {
-  const { name, memberIds } = req.body;
+  const { name, memberIds, avatar } = req.body;
 
   const memberObjectIds = Array.isArray(memberIds)
     ? memberIds
@@ -47,12 +29,17 @@ async function createRoom(req, res) {
 
   const room = await Room.create({
     name: String(name).trim(),
+    avatar: typeof avatar === "string" ? avatar.trim().slice(0, 500) : "",
     type: "group",
     members,
     createdBy: ownerId,
   });
 
-  return res.status(201).json({ room });
+  const populated = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  return res.status(201).json({ room: populated });
 }
 
 async function getMyRooms(req, res) {
@@ -139,12 +126,80 @@ async function updateMemberRole(req, res) {
 
   target.role = role;
   await room.save();
-  return res.json({ message: "Member role updated", room });
+
+  const populatedRoom = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  const io = req.app.get("io");
+  if (io) {
+    populatedRoom.members.forEach((member) => {
+      io.to(`user:${member.userId._id.toString()}`).emit("room_list_changed", {
+        roomId: room._id.toString(),
+      });
+    });
+  }
+
+  return res.json({ message: "Member role updated", room: populatedRoom });
+}
+
+async function updateGroupRoom(req, res) {
+  const { roomId } = req.params;
+  const { name, avatar } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(roomId)) {
+    return sendError(res, 400, "INVALID_ROOM_ID", "Room ID khong hop le");
+  }
+
+  const room = await Room.findById(roomId);
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (room.type !== "group") {
+    return sendError(res, 400, "NOT_GROUP_ROOM", "Chi ap dung cho nhom");
+  }
+
+  const me = room.members.find((member) => member.userId.toString() === req.user.id);
+  if (!me) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong o trong room nay");
+  }
+
+  if (name !== undefined) {
+    if (!["owner", "admin"].includes(me.role)) {
+      return sendError(
+        res,
+        403,
+        "FORBIDDEN",
+        "Chi truong phong / pho phong doi duoc ten phong",
+      );
+    }
+    room.name = String(name).trim();
+  }
+  if (avatar !== undefined) {
+    room.avatar = String(avatar).trim().slice(0, 500);
+  }
+  await room.save();
+
+  const populated = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  const io = req.app.get("io");
+  if (io) {
+    populated.members.forEach((member) => {
+      io.to(`user:${member.userId._id.toString()}`).emit("room_list_changed", {
+        roomId: room._id.toString(),
+      });
+    });
+  }
+
+  return res.json({ room: populated });
 }
 
 async function addMemberToGroup(req, res) {
   const { roomId } = req.params;
   const { memberUserId } = req.body;
+  const myId = req.user._id;
 
   const room = await Room.findById(roomId);
   if (!room) {
@@ -154,7 +209,7 @@ async function addMemberToGroup(req, res) {
     return sendError(res, 400, "NOT_GROUP_ROOM", "Chi nhom moi them duoc thanh vien");
   }
 
-  const me = room.members.find((member) => member.userId.toString() === req.user.id);
+  const me = room.members.find((member) => member.userId.toString() === myId.toString());
   if (!me) {
     return sendError(res, 403, "FORBIDDEN", "Ban khong o trong room nay");
   }
@@ -162,7 +217,7 @@ async function addMemberToGroup(req, res) {
     return sendError(res, 403, "FORBIDDEN", "Chi chu nhom / admin moi them thanh vien");
   }
 
-  if (memberUserId === req.user.id) {
+  if (memberUserId === myId.toString()) {
     return sendError(res, 400, "INVALID_TARGET", "Ban da o trong nhom");
   }
 
@@ -179,32 +234,276 @@ async function addMemberToGroup(req, res) {
   const isFriend = await FriendRequest.findOne({
     status: "accepted",
     $or: [
-      { fromUserId: req.user.id, toUserId: memberUserId },
-      { fromUserId: memberUserId, toUserId: req.user.id },
+      { fromUserId: myId, toUserId: memberUserId },
+      { fromUserId: memberUserId, toUserId: myId },
     ],
   }).lean();
   if (!isFriend) {
     return sendError(res, 403, "NOT_FRIEND", "Chi them duoc ban be trong danh sach");
   }
 
-  room.members.push({ userId: memberUserId, role: "member" });
-  await room.save();
+  const pendingInvite = await GroupInvite.findOne({
+    roomId: room._id,
+    inviteeUserId: memberUserId,
+    status: "pending",
+  }).lean();
+  if (pendingInvite) {
+    return sendError(res, 409, "INVITE_PENDING", "Da gui loi moi, dang cho nguoi nay chap nhan");
+  }
+
+  const invite = await GroupInvite.create({
+    roomId: room._id,
+    inviteeUserId: memberUserId,
+    invitedByUserId: myId,
+    status: "pending",
+  });
+
+  const inviter = await User.findById(myId).select("username").lean();
 
   const io = req.app.get("io");
-  io.to(`user:${memberUserId}`).emit("room_list_changed", {
-    roomId: room._id.toString(),
-  });
-  room.members.forEach((member) => {
-    io.to(`user:${member.userId.toString()}`).emit("room_list_changed", {
-      roomId: room._id.toString(),
+  if (io) {
+    io.to(`user:${memberUserId}`).emit("group_invite_received", {
+      invite: {
+        _id: invite._id.toString(),
+        roomId: {
+          _id: room._id.toString(),
+          name: room.name,
+          avatar: room.avatar || "",
+          type: "group",
+        },
+        invitedByUserId: {
+          _id: myId.toString(),
+          username: inviter?.username || "?",
+        },
+        status: "pending",
+        createdAt: invite.createdAt,
+      },
     });
+  }
+
+  return res.status(201).json({
+    message: "Da gui loi moi vao nhom",
+    invite: {
+      _id: invite._id,
+      roomId: room._id,
+      inviteeUserId: memberUserId,
+    },
   });
+}
+
+async function listPendingGroupInvites(req, res) {
+  const invites = await GroupInvite.find({
+    inviteeUserId: req.user._id,
+    status: "pending",
+  })
+    .populate("roomId", "name avatar type")
+    .populate("invitedByUserId", "username email avatar status lastSeenAt")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const valid = invites.filter((doc) => doc.roomId && doc.roomId.type === "group");
+  return res.json({ invites: valid });
+}
+
+async function acceptGroupInvite(req, res) {
+  const { inviteId } = req.params;
+  const myId = req.user._id;
+
+  const invite = await GroupInvite.findOne({
+    _id: inviteId,
+    inviteeUserId: myId,
+    status: "pending",
+  });
+  if (!invite) {
+    return sendError(res, 404, "INVITE_NOT_FOUND", "Khong tim thay loi moi hoac da xu ly");
+  }
+
+  const room = await Room.findById(invite.roomId);
+  if (!room || room.type !== "group") {
+    invite.status = "declined";
+    await invite.save();
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Nhom khong con ton tai");
+  }
+
+  if (room.members.some((m) => m.userId.toString() === myId.toString())) {
+    invite.status = "accepted";
+    await invite.save();
+    const populatedRoom = await Room.findById(room._id).populate(
+      "members.userId",
+      "username email avatar status lastSeenAt",
+    );
+    return res.json({ message: "Ban da o trong nhom", room: populatedRoom, alreadyMember: true });
+  }
+
+  room.members.push({ userId: myId, role: "member" });
+  await room.save();
+  invite.status = "accepted";
+  await invite.save();
+
+  const io = req.app.get("io");
+  const roomIdStr = room._id.toString();
+  const memberIds = room.members.map((m) => m.userId.toString());
+  emitRoomListChangedToUsers(io, roomIdStr, memberIds);
 
   const populatedRoom = await Room.findById(room._id).populate(
     "members.userId",
     "username email avatar status lastSeenAt",
   );
-  return res.json({ message: "Member added successfully", room: populatedRoom });
+  return res.json({ message: "Da tham gia nhom", room: populatedRoom });
+}
+
+async function declineGroupInvite(req, res) {
+  const { inviteId } = req.params;
+  const myId = req.user._id;
+
+  const invite = await GroupInvite.findOne({
+    _id: inviteId,
+    inviteeUserId: myId,
+    status: "pending",
+  });
+  if (!invite) {
+    return sendError(res, 404, "INVITE_NOT_FOUND", "Khong tim thay loi moi hoac da xu ly");
+  }
+
+  invite.status = "declined";
+  await invite.save();
+
+  const io = req.app.get("io");
+  if (io) {
+    io.to(`user:${invite.invitedByUserId.toString()}`).emit("group_invite_updated", {
+      inviteId: invite._id.toString(),
+      status: "declined",
+    });
+  }
+
+  return res.json({ ok: true });
+}
+
+function emitRoomListChangedToUsers(io, roomIdStr, userIdStrs) {
+  if (!io) return;
+  const seen = new Set();
+  for (const uid of userIdStrs) {
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    io.to(`user:${uid}`).emit("room_list_changed", { roomId: roomIdStr });
+  }
+}
+
+async function leaveGroup(req, res) {
+  const { roomId } = req.params;
+  const { newOwnerUserId } = req.body;
+
+  const room = await Room.findById(roomId);
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (room.type !== "group") {
+    return sendError(res, 400, "NOT_GROUP_ROOM", "Chi ap dung cho nhom");
+  }
+
+  const me = room.members.find((member) => member.userId.toString() === req.user.id);
+  if (!me) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong o trong room nay");
+  }
+
+  const io = req.app.get("io");
+  const roomIdStr = room._id.toString();
+  const myId = req.user.id;
+
+  if (me.role !== "owner") {
+    const beforeIds = room.members.map((m) => m.userId.toString());
+    room.members = room.members.filter((m) => m.userId.toString() !== myId);
+    await room.save();
+    emitRoomListChangedToUsers(io, roomIdStr, [...beforeIds]);
+    return res.json({ ok: true });
+  }
+
+  if (room.members.length === 1) {
+    return sendError(
+      res,
+      400,
+      "SOLE_OWNER",
+      "Ban la thanh vien duy nhat. Hay them nguoi khac hoac xoa nhom thay vi roi.",
+    );
+  }
+
+  if (!newOwnerUserId || !mongoose.Types.ObjectId.isValid(newOwnerUserId)) {
+    return sendError(
+      res,
+      400,
+      "TRANSFER_REQUIRED",
+      "Truong phong can nhuong quyen cho thanh vien khac truoc khi roi nhom",
+    );
+  }
+
+  if (newOwnerUserId === myId) {
+    return sendError(res, 400, "INVALID_TARGET", "Chon thanh vien khac lam truong phong moi");
+  }
+
+  const successor = room.members.find((m) => m.userId.toString() === newOwnerUserId);
+  if (!successor) {
+    return sendError(res, 400, "NOT_MEMBER", "Nguoi duoc chon khong trong nhom");
+  }
+
+  successor.role = "owner";
+  room.createdBy = successor.userId;
+  room.members = room.members.filter((m) => m.userId.toString() !== myId);
+  await room.save();
+
+  const afterIds = room.members.map((m) => m.userId.toString());
+  emitRoomListChangedToUsers(io, roomIdStr, [...afterIds, myId]);
+
+  return res.json({ ok: true });
+}
+
+async function removeMemberFromGroup(req, res) {
+  const { roomId, memberUserId } = req.params;
+
+  if (memberUserId === req.user.id) {
+    return sendError(res, 400, "USE_LEAVE", "Dung chuc nang roi nhom de roi chinh ban");
+  }
+
+  const room = await Room.findById(roomId);
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (room.type !== "group") {
+    return sendError(res, 400, "NOT_GROUP_ROOM", "Chi ap dung cho nhom");
+  }
+
+  const me = room.members.find((member) => member.userId.toString() === req.user.id);
+  if (!me || !["owner", "admin"].includes(me.role)) {
+    return sendError(res, 403, "FORBIDDEN", "Chi truong phong / pho phong moi xoa duoc thanh vien");
+  }
+
+  const target = room.members.find((m) => m.userId.toString() === memberUserId);
+  if (!target) {
+    return sendError(res, 404, "MEMBER_NOT_FOUND", "Khong tim thay thanh vien");
+  }
+  if (target.role === "owner") {
+    return sendError(res, 403, "CANNOT_REMOVE_OWNER", "Khong the xoa truong phong khoi nhom");
+  }
+  if (me.role === "admin" && target.role === "admin") {
+    return sendError(
+      res,
+      403,
+      "ADMIN_CANNOT_REMOVE_ADMIN",
+      "Pho phong chi co the xoa thanh vien, khong xoa pho phong khac",
+    );
+  }
+
+  const beforeIds = room.members.map((m) => m.userId.toString());
+  room.members = room.members.filter((m) => m.userId.toString() !== memberUserId);
+  await room.save();
+
+  const io = req.app.get("io");
+  emitRoomListChangedToUsers(io, room._id.toString(), beforeIds);
+
+  const populatedRoom = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  return res.json({ message: "Member removed", room: populatedRoom });
 }
 
 async function getRoomMessages(req, res) {
@@ -276,42 +575,27 @@ async function deleteRoomMessage(req, res) {
 async function markRoomRead(req, res) {
   const { roomId } = req.params;
   const { messageId } = req.body;
-
-  const room = await Room.findById(roomId).select("members");
-  if (!room) {
-    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
-  }
-  if (!hasMember(room, req.user.id)) {
-    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(String(messageId))) {
-    return sendError(res, 400, "INVALID_MESSAGE_ID", "Message ID khong hop le");
-  }
-
-  const msgExists = await Message.exists({ _id: messageId, roomId });
-  if (!msgExists) {
-    return sendError(res, 404, "MESSAGE_NOT_FOUND", "Khong tim thay tin nhan trong room");
-  }
-
-  const lastReadAt = new Date();
-  await RoomReadState.findOneAndUpdate(
-    { roomId, userId: req.user._id },
-    {
-      lastReadMessageId: messageId,
-      lastReadAt,
-    },
-    { upsert: true, new: true },
-  );
-
   const io = req.app.get("io");
-  emitToRoomMembers(io, room, "read_receipt", {
+  const result = await markRoomReadAndBroadcast(io, {
     roomId,
-    userId: req.user.id,
-    messageId: String(messageId),
-    lastReadAt: lastReadAt.toISOString(),
+    userIdStr: req.user.id,
+    messageId,
   });
-
+  if (!result.ok) {
+    if (result.error === "Room not found") {
+      return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+    }
+    if (result.error === "You are not a member of this room") {
+      return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+    }
+    if (result.error === "Invalid messageId") {
+      return sendError(res, 400, "INVALID_MESSAGE_ID", "Message ID khong hop le");
+    }
+    if (result.error === "Message not found in room") {
+      return sendError(res, 404, "MESSAGE_NOT_FOUND", "Khong tim thay tin nhan trong room");
+    }
+    return sendError(res, 400, "MARK_READ_FAILED", result.error || "Loi cap nhat da doc");
+  }
   return res.json({ ok: true });
 }
 
@@ -363,8 +647,14 @@ module.exports = {
   getMyRooms,
   getUnreadSummary,
   joinRoom,
+  updateGroupRoom,
   updateMemberRole,
   addMemberToGroup,
+  listPendingGroupInvites,
+  acceptGroupInvite,
+  declineGroupInvite,
+  leaveGroup,
+  removeMemberFromGroup,
   getOrCreateDirectRoom,
   getRoomMessages,
   deleteRoomMessage,

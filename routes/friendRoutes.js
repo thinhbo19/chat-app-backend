@@ -9,6 +9,7 @@ const {
   removeFriend,
 } = require("../controllers/friendController");
 const { requireAuth } = require("../middlewares/authMiddleware");
+const { friendRequestLimiter } = require("../middlewares/rateLimit");
 const { validate } = require("../middlewares/validate");
 const {
   sendRequestSchema,
@@ -19,7 +20,12 @@ const {
 const router = express.Router();
 
 router.use(requireAuth);
-router.post("/request", validate(sendRequestSchema), sendFriendRequest);
+router.post(
+  "/request",
+  friendRequestLimiter,
+  validate(sendRequestSchema),
+  sendFriendRequest,
+);
 router.get("/requests/incoming", getIncomingRequests);
 router.get("/requests/outgoing", getOutgoingRequests);
 router.post("/request/:requestId/accept", validate(requestIdParamsSchema), acceptFriendRequest);

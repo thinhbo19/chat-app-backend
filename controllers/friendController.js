@@ -6,12 +6,20 @@ const Message = require("../models/Message");
 const { ensureDirectRoomForUsers, buildDirectKey } = require("../utils/room");
 const { sendError } = require("../utils/apiError");
 
+function meId(req) {
+  return req.user && req.user._id ? req.user._id : null;
+}
+
 async function sendFriendRequest(req, res) {
   const { toUserId } = req.body;
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   if (!mongoose.Types.ObjectId.isValid(toUserId)) {
     return sendError(res, 400, "INVALID_USER_ID", "ID nguoi dung khong hop le");
   }
-  if (toUserId === req.user.id) {
+  if (String(toUserId) === myId.toString()) {
     return sendError(res, 400, "INVALID_TARGET", "Khong the gui loi moi cho chinh minh");
   }
 
@@ -22,21 +30,21 @@ async function sendFriendRequest(req, res) {
 
   const reversePending = await FriendRequest.findOne({
     fromUserId: toUserId,
-    toUserId: req.user.id,
+    toUserId: myId,
     status: "pending",
   });
   if (reversePending) {
     reversePending.status = "accepted";
     await reversePending.save();
-    const directRoom = await ensureDirectRoomForUsers(req.user.id, toUserId);
+    const directRoom = await ensureDirectRoomForUsers(myId, toUserId);
     const io = req.app.get("io");
-    io.to(`user:${req.user.id}`).emit("friendship_updated", {
+    io.to(`user:${myId}`).emit("friendship_updated", {
       friendUserId: toUserId,
     });
     io.to(`user:${toUserId}`).emit("friendship_updated", {
-      friendUserId: req.user.id,
+      friendUserId: myId.toString(),
     });
-    io.to(`user:${req.user.id}`).emit("room_list_changed", {
+    io.to(`user:${myId}`).emit("room_list_changed", {
       roomId: directRoom._id.toString(),
     });
     io.to(`user:${toUserId}`).emit("room_list_changed", {
@@ -49,7 +57,7 @@ async function sendFriendRequest(req, res) {
   }
 
   const existing = await FriendRequest.findOne({
-    fromUserId: req.user.id,
+    fromUserId: myId,
     toUserId,
   });
   if (existing) {
@@ -69,13 +77,13 @@ async function sendFriendRequest(req, res) {
     io.to(`user:${toUserId}`).emit("friend_request_received", {
       request: requestWithUser,
     });
-    io.to(`user:${req.user.id}`).emit("friend_data_changed");
+    io.to(`user:${myId}`).emit("friend_data_changed");
     io.to(`user:${toUserId}`).emit("friend_data_changed");
     return res.json({ message: "Friend request sent again", request: requestWithUser });
   }
 
   const request = await FriendRequest.create({
-    fromUserId: req.user.id,
+    fromUserId: myId,
     toUserId,
     status: "pending",
   });
@@ -88,40 +96,54 @@ async function sendFriendRequest(req, res) {
   io.to(`user:${toUserId}`).emit("friend_request_received", {
     request: requestWithUser,
   });
-  io.to(`user:${req.user.id}`).emit("friend_data_changed");
+  io.to(`user:${myId}`).emit("friend_data_changed");
   io.to(`user:${toUserId}`).emit("friend_data_changed");
 
   return res.status(201).json({ message: "Friend request sent", request: requestWithUser });
 }
 
 async function getIncomingRequests(req, res) {
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   const requests = await FriendRequest.find({
-    toUserId: req.user.id,
+    toUserId: myId,
     status: "pending",
   })
     .populate("fromUserId", "username email avatar status lastSeenAt")
     .sort({ createdAt: -1 });
 
-  return res.json({ requests });
+  const mine = requests.filter((r) => r.toUserId.toString() === myId.toString());
+  return res.json({ requests: mine });
 }
 
 async function getOutgoingRequests(req, res) {
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   const requests = await FriendRequest.find({
-    fromUserId: req.user.id,
+    fromUserId: myId,
     status: "pending",
   })
     .populate("toUserId", "username email avatar status lastSeenAt")
     .sort({ createdAt: -1 });
 
-  return res.json({ requests });
+  const mine = requests.filter((r) => r.fromUserId.toString() === myId.toString());
+  return res.json({ requests: mine });
 }
 
 async function acceptFriendRequest(req, res) {
   const { requestId } = req.params;
 
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   const request = await FriendRequest.findOne({
     _id: requestId,
-    toUserId: req.user.id,
+    toUserId: myId,
     status: "pending",
   });
   if (!request) {
@@ -136,7 +158,7 @@ async function acceptFriendRequest(req, res) {
   );
   const io = req.app.get("io");
   io.to(`user:${request.fromUserId.toString()}`).emit("friendship_updated", {
-    friendUserId: req.user.id,
+    friendUserId: myId.toString(),
   });
   io.to(`user:${request.toUserId.toString()}`).emit("friendship_updated", {
     friendUserId: request.fromUserId.toString(),
@@ -156,9 +178,13 @@ async function acceptFriendRequest(req, res) {
 async function rejectFriendRequest(req, res) {
   const { requestId } = req.params;
 
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   const request = await FriendRequest.findOne({
     _id: requestId,
-    toUserId: req.user.id,
+    toUserId: myId,
     status: "pending",
   });
   if (!request) {
@@ -179,33 +205,48 @@ async function rejectFriendRequest(req, res) {
 }
 
 async function getFriendList(req, res) {
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
   const requests = await FriendRequest.find({
     status: "accepted",
-    $or: [{ fromUserId: req.user.id }, { toUserId: req.user.id }],
+    $or: [{ fromUserId: myId }, { toUserId: myId }],
   })
     .populate("fromUserId", "username email avatar status lastSeenAt")
     .populate("toUserId", "username email avatar status lastSeenAt")
     .sort({ updatedAt: -1 });
 
-  const friends = requests.map((request) => {
-    const isRequester = request.fromUserId._id.toString() === req.user.id;
-    return isRequester ? request.toUserId : request.fromUserId;
-  });
+  const friends = requests
+    .map((request) => {
+      const from = request.fromUserId;
+      const to = request.toUserId;
+      if (!from || !to || !from._id || !to._id) {
+        return null;
+      }
+      const isRequester = from._id.toString() === myId.toString();
+      return isRequester ? to : from;
+    })
+    .filter(Boolean);
 
   return res.json({ friends });
 }
 
 async function removeFriend(req, res) {
   const { friendUserId } = req.params;
-  if (friendUserId === req.user.id) {
+  const myId = meId(req);
+  if (!myId) {
+    return sendError(res, 401, "UNAUTHORIZED", "Khong xac dinh duoc nguoi dung");
+  }
+  if (friendUserId === myId.toString()) {
     return sendError(res, 400, "INVALID_TARGET", "Khong the xoa chinh minh");
   }
 
   const relation = await FriendRequest.findOne({
     status: "accepted",
     $or: [
-      { fromUserId: req.user.id, toUserId: friendUserId },
-      { fromUserId: friendUserId, toUserId: req.user.id },
+      { fromUserId: myId, toUserId: friendUserId },
+      { fromUserId: friendUserId, toUserId: myId },
     ],
   });
 
@@ -215,7 +256,7 @@ async function removeFriend(req, res) {
 
   await FriendRequest.deleteOne({ _id: relation._id });
 
-  const directKey = buildDirectKey(req.user.id, friendUserId);
+  const directKey = buildDirectKey(myId, friendUserId);
   const directRoom = await Room.findOneAndDelete({
     type: "direct",
     directKey,
@@ -225,18 +266,18 @@ async function removeFriend(req, res) {
   }
 
   const io = req.app.get("io");
-  io.to(`user:${req.user.id}`).emit("friendship_removed", {
+  io.to(`user:${myId}`).emit("friendship_removed", {
     friendUserId,
   });
   io.to(`user:${friendUserId}`).emit("friendship_removed", {
-    friendUserId: req.user.id,
+    friendUserId: myId.toString(),
   });
-  io.to(`user:${req.user.id}`).emit("friend_data_changed");
+  io.to(`user:${myId}`).emit("friend_data_changed");
   io.to(`user:${friendUserId}`).emit("friend_data_changed");
-  io.to(`user:${req.user.id}`).emit("room_list_changed");
+  io.to(`user:${myId}`).emit("room_list_changed");
   io.to(`user:${friendUserId}`).emit("room_list_changed");
   if (directRoom) {
-    io.to(`user:${req.user.id}`).emit("direct_room_removed", {
+    io.to(`user:${myId}`).emit("direct_room_removed", {
       roomId: directRoom._id.toString(),
     });
     io.to(`user:${friendUserId}`).emit("direct_room_removed", {

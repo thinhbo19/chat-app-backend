@@ -9,6 +9,10 @@ const {
 const { requireAuth } = require("../middlewares/authMiddleware");
 const { validate } = require("../middlewares/validate");
 const {
+  authStrictLimiter,
+  authRefreshLimiter,
+} = require("../middlewares/rateLimit");
+const {
   registerSchema,
   loginSchema,
   refreshSchema,
@@ -16,10 +20,10 @@ const {
 
 const router = express.Router();
 
-router.post("/register", validate(registerSchema), register);
-router.post("/login", validate(loginSchema), login);
-router.post("/refresh", validate(refreshSchema), refresh);
-router.post("/logout", validate(refreshSchema), logout);
+router.post("/register", authStrictLimiter, validate(registerSchema), register);
+router.post("/login", authStrictLimiter, validate(loginSchema), login);
+router.post("/refresh", authRefreshLimiter, validate(refreshSchema), refresh);
+router.post("/logout", authRefreshLimiter, validate(refreshSchema), logout);
 router.get("/me", requireAuth, me);
 
 module.exports = router;

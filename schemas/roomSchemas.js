@@ -6,12 +6,51 @@ const createRoomSchema = {
   body: z.object({
     name: z.string().trim().min(2).max(80),
     memberIds: z.array(z.string().regex(objectIdRegex)).optional().default([]),
+    avatar: z.string().trim().max(500).optional().default(""),
+  }),
+};
+
+const updateGroupRoomSchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+  }),
+  body: z
+    .object({
+      name: z.string().trim().min(2).max(80).optional(),
+      avatar: z.string().trim().max(500).optional(),
+    })
+    .refine((data) => data.name !== undefined || data.avatar !== undefined, {
+      message: "Can cap nhat it nhat name hoac avatar",
+    }),
+};
+
+const leaveGroupSchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+  }),
+  body: z
+    .object({
+      newOwnerUserId: z.string().regex(objectIdRegex, "Invalid newOwnerUserId").optional(),
+    })
+    .default({}),
+};
+
+const removeMemberParamsSchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+    memberUserId: z.string().regex(objectIdRegex, "Invalid memberUserId"),
   }),
 };
 
 const roomIdParamsSchema = {
   params: z.object({
     roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+  }),
+};
+
+const groupInviteIdParamsSchema = {
+  params: z.object({
+    inviteId: z.string().regex(objectIdRegex, "Invalid inviteId"),
   }),
 };
 
@@ -68,7 +107,11 @@ const markRoomReadSchema = {
 
 module.exports = {
   createRoomSchema,
+  updateGroupRoomSchema,
+  leaveGroupSchema,
+  removeMemberParamsSchema,
   roomIdParamsSchema,
+  groupInviteIdParamsSchema,
   updateMemberRoleSchema,
   addMemberToGroupSchema,
   directRoomParamsSchema,

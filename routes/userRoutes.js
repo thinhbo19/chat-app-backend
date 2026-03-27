@@ -1,12 +1,27 @@
 const express = require("express");
-const { browseUsers, searchUsers } = require("../controllers/userController");
+const {
+  browseUsers,
+  searchUsers,
+  updateMyProfile,
+  changeMyPassword,
+  updateMyAvatar,
+} = require("../controllers/userController");
 const { requireAuth } = require("../middlewares/authMiddleware");
 const { validate } = require("../middlewares/validate");
-const { browseUsersSchema, searchUsersSchema } = require("../schemas/userSchemas");
+const {
+  browseUsersSchema,
+  searchUsersSchema,
+  updateMyProfileSchema,
+  changeMyPasswordSchema,
+  updateMyAvatarSchema,
+} = require("../schemas/userSchemas");
 
 const router = express.Router();
 
 router.use(requireAuth);
+router.patch("/me", validate(updateMyProfileSchema), updateMyProfile);
+router.patch("/me/password", validate(changeMyPasswordSchema), changeMyPassword);
+router.patch("/me/avatar", validate(updateMyAvatarSchema), updateMyAvatar);
 router.get("/browse", validate(browseUsersSchema), browseUsers);
 router.get("/search", validate(searchUsersSchema), searchUsers);
 

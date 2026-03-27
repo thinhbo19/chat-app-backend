@@ -8,6 +8,7 @@ const {
   verifyRefreshToken,
 } = require("../utils/token");
 const { sha256 } = require("../utils/hash");
+const { publicUserPayload } = require("../utils/userPublic");
 
 function parseExpiryToMs(expiry) {
   const match = String(expiry).trim().match(/^(\d+)([mhd])$/i);
@@ -46,12 +47,7 @@ async function register(req, res) {
 
   return res.status(201).json({
     message: "Register success",
-    user: {
-      _id: user._id,
-      id: user._id,
-      username: user.username,
-      email: user.email,
-    },
+    user: publicUserPayload(user),
   });
 }
 
@@ -90,13 +86,7 @@ async function login(req, res) {
   return res.json({
     accessToken,
     refreshToken,
-    user: {
-      _id: user._id,
-      id: user._id,
-      username: user.username,
-      email: user.email,
-      avatar: user.avatar,
-    },
+    user: publicUserPayload(user),
   });
 }
 
@@ -142,7 +132,7 @@ async function logout(req, res) {
 }
 
 async function me(req, res) {
-  return res.json({ user: req.user });
+  return res.json({ user: publicUserPayload(req.user) });
 }
 
 module.exports = {

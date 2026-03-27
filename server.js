@@ -12,6 +12,7 @@ const RefreshToken = require("./models/RefreshToken");
 const { verifyAccessToken } = require("./utils/token");
 const { sendError } = require("./utils/apiError");
 const { registerChatSocket } = require("./socket/chatSocket");
+const { logger } = require("./utils/logger");
 
 const authRoutes = require("./routes/authRoutes");
 const roomRoutes = require("./routes/roomRoutes");
@@ -25,20 +26,65 @@ const server = http.createServer(app);
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT || 5000;
 
+function trustProxySetting() {
+  const v = process.env.TRUST_PROXY_HOPS;
+  if (v === "0" || v === "false") return false;
+  if (v != null && String(v).trim() !== "") return Number(v);
+  return process.env.NODE_ENV === "production" ? 1 : false;
+}
+app.set("trust proxy", trustProxySetting());
+
+function parseCorsOrigins() {
+  const raw = process.env.CORS_ORIGIN;
+  if (raw == null || String(raw).trim() === "") {
+    return true;
+  }
+  const list = String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length > 0 ? list : true;
+}
+
+const corsOriginOption = parseCorsOrigins();
+
 app.use(
   cors({
-    origin: true,
+    origin: corsOriginOption,
     credentials: true,
   }),
 );
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.get("/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    mongoState: mongoose.connection.readyState,
-  });
+app.get("/health", async (_req, res) => {
+  const ready = mongoose.connection.readyState;
+  try {
+    const db = mongoose.connection.db;
+    if (!db) {
+      return res.status(503).json({
+        status: "degraded",
+        mongo: "no_db",
+        mongoState: ready,
+        uptime: process.uptime(),
+      });
+    }
+    await db.admin().command({ ping: 1 });
+    return res.json({
+      status: "ok",
+      mongo: "connected",
+      mongoState: ready,
+      uptime: process.uptime(),
+    });
+  } catch (error) {
+    logger.warn("health.mongo_ping_failed", { message: error.message });
+    return res.status(503).json({
+      status: "error",
+      mongo: "unreachable",
+      mongoState: ready,
+      uptime: process.uptime(),
+    });
+  }
 });
 
 app.use("/api/auth", authRoutes);
@@ -48,13 +94,16 @@ app.use("/api/users", userRoutes);
 app.use("/api/messages", messageRoutes);
 
 app.use((error, _req, res, _next) => {
-  console.error(error);
+  logger.error("http.unhandled_error", {
+    message: error.message,
+    stack: error.stack,
+  });
   return sendError(res, 500, "INTERNAL_ERROR", "Loi may chu noi bo");
 });
 
 const io = new Server(server, {
   cors: {
-    origin: true,
+    origin: corsOriginOption,
     credentials: true,
     methods: ["GET", "POST"],
   },
@@ -85,7 +134,7 @@ registerChatSocket(io);
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
-    console.log("MongoDB connected");
+    logger.info("mongo.connected", {});
     const db = mongoose.connection.db;
     if (db) {
       try {
@@ -95,24 +144,24 @@ mongoose
           const key = idx.key || {};
           if (Object.prototype.hasOwnProperty.call(key, "token") && idx.name && idx.name !== "_id_") {
             await coll.dropIndex(idx.name);
-            console.log(`[mongo] Dropped legacy refreshtokens index "${idx.name}" (token field removed from schema)`);
+            logger.info("mongo.dropped_legacy_refresh_index", { name: idx.name });
           }
         }
       } catch (error) {
         if (error.code !== 26 && error.codeName !== "NamespaceNotFound") {
-          console.warn("[mongo] refreshtokens legacy index cleanup:", error.message);
+          logger.warn("mongo.refresh_index_cleanup", { message: error.message });
         }
       }
     }
     try {
       await RefreshToken.syncIndexes();
     } catch (error) {
-      console.warn("RefreshToken.syncIndexes:", error.message);
+      logger.warn("mongo.refresh_sync_indexes", { message: error.message });
     }
     server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server is running at http://0.0.0.0:${PORT}`);
+      logger.info("server.listen", { port: PORT, bind: "0.0.0.0" });
     });
   })
   .catch((error) => {
-    console.error("MongoDB connection error:", error.message);
+    logger.error("mongo.connect_failed", { message: error.message });
   });
