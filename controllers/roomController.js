@@ -10,6 +10,9 @@ const { formatMessageDoc } = require("../utils/formatChatMessage");
 const { sendError } = require("../utils/apiError");
 const { hasMember, emitToRoomMembers } = require("../utils/roomMembers");
 const { markRoomReadAndBroadcast } = require("../services/roomReadService");
+const { escapeRegex } = require("../utils/escapeRegex");
+
+const MAX_PINNED_MESSAGES_PER_ROOM = 3;
 
 async function createRoom(req, res) {
   const { name, memberIds, avatar } = req.body;
@@ -530,6 +533,7 @@ async function getRoomMessages(req, res) {
     .sort({ _id: -1 })
     .limit(limit)
     .populate("senderId", "username")
+    .populate("reactions.userId", "username")
     .lean();
 
   const messages = docs.reverse().map((item) => formatMessageDoc(item));
@@ -563,13 +567,219 @@ async function deleteRoomMessage(req, res) {
   msg.deletedAt = new Date();
   await msg.save();
 
-  const populated = await Message.findById(msg._id).populate("senderId", "username").lean();
+  const populated = await Message.findById(msg._id)
+    .populate("senderId", "username")
+    .populate("reactions.userId", "username")
+    .lean();
   const formatted = formatMessageDoc(populated);
 
   const io = req.app.get("io");
   emitToRoomMembers(io, room, "message_updated", formatted);
 
   return res.json({ message: formatted });
+}
+
+async function toggleMessageReaction(req, res) {
+  const { roomId, messageId } = req.params;
+  const emoji = String(req.body?.emoji ?? "").trim();
+  if (!emoji || emoji.length > 16) {
+    return sendError(res, 400, "INVALID_EMOJI", "Emoji khong hop le");
+  }
+
+  const room = await Room.findById(roomId).select("members");
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (!hasMember(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+  }
+
+  const msg = await Message.findOne({ _id: messageId, roomId, deletedAt: null });
+  if (!msg) {
+    return sendError(res, 404, "MESSAGE_NOT_FOUND", "Khong tim thay tin nhan");
+  }
+
+  const uid = req.user._id;
+  const list = (msg.reactions || []).map((r) => ({
+    userId: r.userId,
+    emoji: r.emoji,
+  }));
+  const i = list.findIndex((r) => r.userId.toString() === uid.toString());
+  if (i >= 0 && list[i].emoji === emoji) {
+    list.splice(i, 1);
+  } else if (i >= 0) {
+    list[i] = { userId: uid, emoji };
+  } else {
+    list.push({ userId: uid, emoji });
+  }
+  msg.reactions = list;
+  await msg.save();
+
+  const populated = await Message.findById(msg._id)
+    .populate("senderId", "username")
+    .populate("reactions.userId", "username")
+    .lean();
+  const formatted = formatMessageDoc(populated);
+  const io = req.app.get("io");
+  emitToRoomMembers(io, room, "message_updated", formatted);
+  return res.json({ message: formatted });
+}
+
+function canPinInRoom(room, userIdStr) {
+  const me = room.members.find((m) => m.userId.toString() === userIdStr);
+  if (!me) return false;
+  if (room.type === "direct") return true;
+  return ["owner", "admin"].includes(me.role);
+}
+
+async function pinRoomMessage(req, res) {
+  const { roomId } = req.params;
+  const messageId = String(req.body?.messageId || "").trim();
+
+  if (!mongoose.Types.ObjectId.isValid(roomId) || !mongoose.Types.ObjectId.isValid(messageId)) {
+    return sendError(res, 400, "INVALID_ID", "ID khong hop le");
+  }
+
+  const room = await Room.findById(roomId);
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (!hasMember(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+  }
+  if (!canPinInRoom(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Chi chu phong / pho phong moi ghim tin (nhom)");
+  }
+
+  const msg = await Message.findOne({ _id: messageId, roomId, deletedAt: null });
+  if (!msg) {
+    return sendError(res, 404, "MESSAGE_NOT_FOUND", "Khong tim thay tin nhan");
+  }
+
+  const pins = (room.pinnedMessageIds || []).map((id) => id.toString());
+  if (pins.includes(messageId)) {
+    const populated = await Room.findById(room._id).populate(
+      "members.userId",
+      "username email avatar status lastSeenAt",
+    );
+    return res.json({
+      pinnedMessageIds: pins,
+      room: populated,
+    });
+  }
+  if (pins.length >= MAX_PINNED_MESSAGES_PER_ROOM) {
+    return sendError(
+      res,
+      400,
+      "PIN_LIMIT",
+      `Toi da ${MAX_PINNED_MESSAGES_PER_ROOM} tin ghim`,
+    );
+  }
+
+  room.pinnedMessageIds = [...(room.pinnedMessageIds || []), new mongoose.Types.ObjectId(messageId)];
+  await room.save();
+
+  const populatedRoom = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  const io = req.app.get("io");
+  const payload = {
+    roomId: room._id.toString(),
+    pinnedMessageIds: room.pinnedMessageIds.map((id) => id.toString()),
+  };
+  if (io) {
+    emitToRoomMembers(io, room, "room_pins_updated", payload);
+    populatedRoom.members.forEach((member) => {
+      const u = member.userId;
+      const mid = u && typeof u === "object" && u._id ? u._id.toString() : String(u);
+      if (mid) io.to(`user:${mid}`).emit("room_list_changed", { roomId: room._id.toString() });
+    });
+  }
+
+  return res.json({
+    pinnedMessageIds: payload.pinnedMessageIds,
+    room: populatedRoom,
+  });
+}
+
+async function unpinRoomMessage(req, res) {
+  const { roomId, messageId } = req.params;
+
+  const room = await Room.findById(roomId);
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (!hasMember(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+  }
+  if (!canPinInRoom(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Chi chu phong / pho phong moi bo ghim (nhom)");
+  }
+
+  room.pinnedMessageIds = (room.pinnedMessageIds || []).filter(
+    (id) => id.toString() !== messageId,
+  );
+  await room.save();
+
+  const populatedRoom = await Room.findById(room._id).populate(
+    "members.userId",
+    "username email avatar status lastSeenAt",
+  );
+  const io = req.app.get("io");
+  const payload = {
+    roomId: room._id.toString(),
+    pinnedMessageIds: room.pinnedMessageIds.map((id) => id.toString()),
+  };
+  if (io) {
+    emitToRoomMembers(io, room, "room_pins_updated", payload);
+    populatedRoom.members.forEach((member) => {
+      const u = member.userId;
+      const mid = u && typeof u === "object" && u._id ? u._id.toString() : String(u);
+      if (mid) io.to(`user:${mid}`).emit("room_list_changed", { roomId: room._id.toString() });
+    });
+  }
+
+  return res.json({
+    pinnedMessageIds: payload.pinnedMessageIds,
+    room: populatedRoom,
+  });
+}
+
+async function searchRoomMessages(req, res) {
+  const { roomId } = req.params;
+  const q = String(req.query.q ?? "").trim();
+  const limitRaw = req.query.limit != null ? Number(req.query.limit) : 30;
+  const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 30));
+
+  const room = await Room.findById(roomId).select("members");
+  if (!room) {
+    return sendError(res, 404, "ROOM_NOT_FOUND", "Khong tim thay room");
+  }
+  if (!hasMember(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+  }
+
+  if (!q) {
+    return res.json({ messages: [] });
+  }
+
+  const safe = escapeRegex(q);
+  const docs = await Message.find({
+    roomId,
+    deletedAt: null,
+    contentType: "text",
+    text: { $regex: safe, $options: "i" },
+  })
+    .sort({ _id: -1 })
+    .limit(limit)
+    .populate("senderId", "username")
+    .populate("reactions.userId", "username")
+    .lean();
+
+  return res.json({
+    messages: docs.map((item) => formatMessageDoc(item)),
+  });
 }
 
 async function markRoomRead(req, res) {
@@ -660,4 +870,8 @@ module.exports = {
   deleteRoomMessage,
   markRoomRead,
   getRoomReadStates,
+  toggleMessageReaction,
+  pinRoomMessage,
+  unpinRoomMessage,
+  searchRoomMessages,
 };

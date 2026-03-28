@@ -17,6 +17,10 @@ const {
   markRoomRead,
   getRoomReadStates,
   getUnreadSummary,
+  toggleMessageReaction,
+  pinRoomMessage,
+  unpinRoomMessage,
+  searchRoomMessages,
 } = require("../controllers/roomController");
 const { requireAuth } = require("../middlewares/authMiddleware");
 const { validate } = require("../middlewares/validate");
@@ -33,6 +37,9 @@ const {
   getRoomMessagesQuerySchema,
   roomMessageIdParamsSchema,
   markRoomReadSchema,
+  messageReactionSchema,
+  pinMessageSchema,
+  searchRoomMessagesQuerySchema,
 } = require("../schemas/roomSchemas");
 
 const router = express.Router();
@@ -55,7 +62,23 @@ router.post(
 );
 router.post("/direct/:friendUserId", validate(directRoomParamsSchema), getOrCreateDirectRoom);
 router.get("/:roomId/read-state", validate(roomIdParamsSchema), getRoomReadStates);
+router.get(
+  "/:roomId/messages/search",
+  validate(searchRoomMessagesQuerySchema),
+  searchRoomMessages,
+);
 router.get("/:roomId/messages", validate(getRoomMessagesQuerySchema), getRoomMessages);
+router.post(
+  "/:roomId/messages/:messageId/reaction",
+  validate(messageReactionSchema),
+  toggleMessageReaction,
+);
+router.post("/:roomId/pins", validate(pinMessageSchema), pinRoomMessage);
+router.delete(
+  "/:roomId/pins/:messageId",
+  validate(roomMessageIdParamsSchema),
+  unpinRoomMessage,
+);
 router.delete(
   "/:roomId/messages/:messageId",
   validate(roomMessageIdParamsSchema),

@@ -45,6 +45,13 @@ const roomSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    /** Tối đa 3 tin nhắn ghim trong phòng (mọi thành viên thấy). */
+    pinnedMessageIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Message",
+      },
+    ],
   },
   { timestamps: true },
 );

@@ -10,6 +10,26 @@ function formatMessageDoc(item) {
   }
 
   const deleted = Boolean(item.deletedAt);
+  const rawReactions = Array.isArray(item.reactions) ? item.reactions : [];
+  const reactions = deleted
+    ? []
+    : rawReactions.map((r) => {
+        const uid = r.userId;
+        let userIdStr = "";
+        let reactUsername = "Unknown";
+        if (uid && typeof uid === "object" && uid._id != null) {
+          userIdStr = uid._id.toString();
+          reactUsername = uid.username || "Unknown";
+        } else if (uid != null) {
+          userIdStr = String(uid);
+        }
+        return {
+          userId: userIdStr,
+          username: reactUsername,
+          emoji: String(r.emoji || "").trim(),
+        };
+      });
+
   return {
     id: item._id.toString(),
     roomId: item.roomId.toString(),
@@ -22,6 +42,7 @@ function formatMessageDoc(item) {
       id: senderIdStr,
       username,
     },
+    reactions,
   };
 }
 

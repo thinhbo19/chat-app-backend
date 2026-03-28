@@ -41,6 +41,18 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /** Tùy chọn theo phòng: tắt thông báo, ghim phòng lên đầu sidebar. */
+    chatRoomPrefs: [
+      {
+        roomId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Room",
+          required: true,
+        },
+        muted: { type: Boolean, default: false },
+        sidebarPinned: { type: Boolean, default: false },
+      },
+    ],
   },
   { timestamps: true },
 );

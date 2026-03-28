@@ -105,6 +105,35 @@ const markRoomReadSchema = {
   }),
 };
 
+const messageReactionSchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+    messageId: z.string().regex(objectIdRegex, "Invalid messageId"),
+  }),
+  body: z.object({
+    emoji: z.string().trim().min(1).max(16),
+  }),
+};
+
+const pinMessageSchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+  }),
+  body: z.object({
+    messageId: z.string().regex(objectIdRegex, "Invalid messageId"),
+  }),
+};
+
+const searchRoomMessagesQuerySchema = {
+  params: z.object({
+    roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+  }),
+  query: z.object({
+    q: z.string().trim().max(200).optional().default(""),
+    limit: z.coerce.number().int().min(1).max(50).optional().default(30),
+  }),
+};
+
 module.exports = {
   createRoomSchema,
   updateGroupRoomSchema,
@@ -118,4 +147,7 @@ module.exports = {
   getRoomMessagesQuerySchema,
   roomMessageIdParamsSchema,
   markRoomReadSchema,
+  messageReactionSchema,
+  pinMessageSchema,
+  searchRoomMessagesQuerySchema,
 };

@@ -1,8 +1,10 @@
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const Room = require("../models/Room");
 const { sendError } = require("../utils/apiError");
 const { publicUserPayload } = require("../utils/userPublic");
+const { hasMember } = require("../utils/roomMembers");
 
 async function searchUsers(req, res) {
   const q = String(req.query.q || "").trim();
@@ -114,10 +116,45 @@ async function updateMyAvatar(req, res) {
   return res.json({ user: publicUserPayload(user) });
 }
 
+async function patchChatRoomPrefs(req, res) {
+  const { roomId, muted, sidebarPinned } = req.body;
+
+  const room = await Room.findById(roomId).select("members");
+  if (!room || !hasMember(room, req.user.id)) {
+    return sendError(res, 403, "FORBIDDEN", "Ban khong la thanh vien room");
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return sendError(res, 404, "USER_NOT_FOUND", "Khong tim thay tai khoan");
+  }
+
+  if (!Array.isArray(user.chatRoomPrefs)) {
+    user.chatRoomPrefs = [];
+  }
+
+  const rid = roomId.toString();
+  const idx = user.chatRoomPrefs.findIndex((p) => p.roomId.toString() === rid);
+  if (idx >= 0) {
+    if (muted !== undefined) user.chatRoomPrefs[idx].muted = Boolean(muted);
+    if (sidebarPinned !== undefined) user.chatRoomPrefs[idx].sidebarPinned = Boolean(sidebarPinned);
+  } else {
+    user.chatRoomPrefs.push({
+      roomId: new mongoose.Types.ObjectId(roomId),
+      muted: muted !== undefined ? Boolean(muted) : false,
+      sidebarPinned: sidebarPinned !== undefined ? Boolean(sidebarPinned) : false,
+    });
+  }
+
+  await user.save();
+  return res.json({ user: publicUserPayload(user) });
+}
+
 module.exports = {
   searchUsers,
   browseUsers,
   updateMyProfile,
   changeMyPassword,
   updateMyAvatar,
+  patchChatRoomPrefs,
 };

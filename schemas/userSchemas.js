@@ -36,10 +36,23 @@ const updateMyAvatarSchema = {
   }),
 };
 
+const patchChatRoomPrefsSchema = {
+  body: z
+    .object({
+      roomId: z.string().regex(objectIdRegex, "Invalid roomId"),
+      muted: z.boolean().optional(),
+      sidebarPinned: z.boolean().optional(),
+    })
+    .refine((data) => data.muted !== undefined || data.sidebarPinned !== undefined, {
+      message: "Can gui it nhat muted hoac sidebarPinned",
+    }),
+};
+
 module.exports = {
   searchUsersSchema,
   browseUsersSchema,
   updateMyProfileSchema,
   changeMyPasswordSchema,
   updateMyAvatarSchema,
+  patchChatRoomPrefsSchema,
 };
