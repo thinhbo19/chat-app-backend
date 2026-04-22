@@ -1,7 +1,15 @@
 const jwt = require("jsonwebtoken");
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "dev_access_secret";
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "dev_refresh_secret";
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value || !String(value).trim()) {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+  return value;
+}
+
+const ACCESS_SECRET = requireEnv("JWT_ACCESS_SECRET");
+const REFRESH_SECRET = requireEnv("JWT_REFRESH_SECRET");
 const ACCESS_EXPIRES = process.env.ACCESS_TOKEN_EXPIRES_IN || "15m";
 const REFRESH_EXPIRES = process.env.REFRESH_TOKEN_EXPIRES_IN || "7d";
 

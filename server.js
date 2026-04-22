@@ -4,6 +4,7 @@ const path = require("path");
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
+const helmet = require("helmet");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 
@@ -52,6 +53,12 @@ app.use(
   cors({
     origin: corsOriginOption,
     credentials: true,
+  }),
+);
+app.disable("x-powered-by");
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
   }),
 );
 app.use(express.json());
