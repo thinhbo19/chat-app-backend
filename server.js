@@ -3,6 +3,7 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const http = require("http");
+const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const helmet = require("helmet");
 const { Server } = require("socket.io");
@@ -11,6 +12,7 @@ const mongoose = require("mongoose");
 const User = require("./models/User");
 const RefreshToken = require("./models/RefreshToken");
 const { verifyAccessToken } = require("./utils/token");
+const { ACCESS_COOKIE, parseCookieHeader } = require("./utils/authCookies");
 const { sendError } = require("./utils/apiError");
 const { registerChatSocket } = require("./socket/chatSocket");
 const { logger } = require("./utils/logger");
@@ -62,6 +64,7 @@ app.use(
   }),
 );
 app.use(express.json());
+app.use(cookieParser());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.get("/health", async (_req, res) => {
@@ -119,7 +122,9 @@ app.set("io", io);
 
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth?.token;
+    const fromAuth = socket.handshake.auth?.token;
+    const cookieToken = parseCookieHeader(socket.handshake.headers?.cookie || "")[ACCESS_COOKIE];
+    const token = fromAuth || cookieToken;
     if (!token) {
       return next(new Error("Unauthorized"));
     }

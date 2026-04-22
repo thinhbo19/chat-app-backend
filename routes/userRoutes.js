@@ -8,6 +8,7 @@ const {
   patchChatRoomPrefs,
 } = require("../controllers/userController");
 const { requireAuth } = require("../middlewares/authMiddleware");
+const { userSearchLimiter } = require("../middlewares/rateLimit");
 const { validate } = require("../middlewares/validate");
 const {
   browseUsersSchema,
@@ -25,7 +26,7 @@ router.patch("/me", validate(updateMyProfileSchema), updateMyProfile);
 router.patch("/me/password", validate(changeMyPasswordSchema), changeMyPassword);
 router.patch("/me/avatar", validate(updateMyAvatarSchema), updateMyAvatar);
 router.patch("/me/room-prefs", validate(patchChatRoomPrefsSchema), patchChatRoomPrefs);
-router.get("/browse", validate(browseUsersSchema), browseUsers);
-router.get("/search", validate(searchUsersSchema), searchUsers);
+router.get("/browse", userSearchLimiter, validate(browseUsersSchema), browseUsers);
+router.get("/search", userSearchLimiter, validate(searchUsersSchema), searchUsers);
 
 module.exports = router;

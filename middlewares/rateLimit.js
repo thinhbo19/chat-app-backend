@@ -41,9 +41,29 @@ const messageUploadLimiter = rateLimit({
   handler: limitHandler,
 });
 
+/** Đọc/search dữ liệu chat (messages, room list, read-state) */
+const chatReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limitHandler,
+});
+
+/** Tìm kiếm người dùng / browse user */
+const userSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limitHandler,
+});
+
 module.exports = {
   authStrictLimiter,
   authRefreshLimiter,
   friendRequestLimiter,
   messageUploadLimiter,
+  chatReadLimiter,
+  userSearchLimiter,
 };

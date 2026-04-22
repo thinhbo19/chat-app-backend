@@ -62,23 +62,65 @@ async function getUnreadSummary(req, res) {
     .select("_id")
     .lean();
 
-  const counts = {};
-  for (const room of roomDocs) {
-    const rid = room._id;
-    const state = await RoomReadState.findOne({ roomId: rid, userId }).lean();
-    const afterId = state?.lastReadMessageId;
-    const filter = {
-      roomId: rid,
-      senderId: { $ne: userId },
-      deletedAt: null,
-    };
-    if (afterId) {
-      filter._id = { $gt: afterId };
-    }
-    const n = await Message.countDocuments(filter);
-    counts[rid.toString()] = Math.min(n, 999);
+  const roomIds = roomDocs.map((room) => room._id);
+  const counts = Object.fromEntries(roomIds.map((id) => [id.toString(), 0]));
+  if (roomIds.length === 0) {
+    return res.json({ counts });
   }
 
+  const states = await RoomReadState.find({
+    userId,
+    roomId: { $in: roomIds },
+  })
+    .select("roomId lastReadMessageId")
+    .lean();
+
+  const stateByRoomId = new Map(
+    states.map((state) => [state.roomId.toString(), state.lastReadMessageId || null]),
+  );
+
+  const roomFiltersWithState = [];
+  const roomIdsWithoutState = [];
+  for (const roomId of roomIds) {
+    const key = roomId.toString();
+    const lastReadMessageId = stateByRoomId.get(key);
+    if (lastReadMessageId) {
+      roomFiltersWithState.push({
+        roomId,
+        senderId: { $ne: userId },
+        deletedAt: null,
+        _id: { $gt: lastReadMessageId },
+      });
+    } else {
+      roomIdsWithoutState.push(roomId);
+    }
+  }
+
+  const aggregateResults = [];
+  if (roomIdsWithoutState.length > 0) {
+    const withoutStateCounts = await Message.aggregate([
+      {
+        $match: {
+          roomId: { $in: roomIdsWithoutState },
+          senderId: { $ne: userId },
+          deletedAt: null,
+        },
+      },
+      { $group: { _id: "$roomId", count: { $sum: 1 } } },
+    ]);
+    aggregateResults.push(...withoutStateCounts);
+  }
+  if (roomFiltersWithState.length > 0) {
+    const withStateCounts = await Message.aggregate([
+      { $match: { $or: roomFiltersWithState } },
+      { $group: { _id: "$roomId", count: { $sum: 1 } } },
+    ]);
+    aggregateResults.push(...withStateCounts);
+  }
+
+  for (const item of aggregateResults) {
+    counts[item._id.toString()] = Math.min(item.count, 999);
+  }
   return res.json({ counts });
 }
 

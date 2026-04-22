@@ -67,3 +67,12 @@ Frontend cần đặt `VITE_API_URL=https://<app>.fly.dev` (HTTPS) và **cùng**
 ## Git
 
 Đây là **một repo Git độc lập** (chỉ backend). Frontend nằm repo `chat-app-frontend`.
+
+## Changelog (recent)
+
+- Added ESLint + Node test scripts and CI checks.
+- Added `helmet` and removed weak JWT secret fallbacks (env required).
+- Hardened user search regex handling to reduce ReDoS risk.
+- Implemented refresh token rotation during `/api/auth/refresh`.
+- Expanded API rate-limits for search and chat-read heavy endpoints.
+- Optimized unread summary query path to reduce N+1 database calls.

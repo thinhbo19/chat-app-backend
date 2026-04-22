@@ -34,7 +34,7 @@ async function markRoomReadAndBroadcast(io, { roomId, userIdStr, messageId }) {
       lastReadMessageId: messageId,
       lastReadAt,
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: "after" },
   );
 
   emitToRoomMembers(io, room, "read_receipt", {

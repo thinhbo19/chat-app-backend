@@ -17,7 +17,7 @@ const loginSchema = {
 
 const refreshSchema = {
   body: z.object({
-    refreshToken: z.string().trim().min(16),
+    refreshToken: z.string().trim().min(16).optional(),
   }),
 };
 

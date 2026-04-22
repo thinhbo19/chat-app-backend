@@ -7,8 +7,9 @@ const {
   signRefreshToken,
   verifyRefreshToken,
 } = require("../utils/token");
+const { ACCESS_COOKIE, REFRESH_COOKIE, cookieOptions } = require("../utils/authCookies");
 const { sha256 } = require("../utils/hash");
-const { publicUserPayload } = require("../utils/userPublic");
+const { selfUserPayload } = require("../utils/userPublic");
 
 function parseExpiryToMs(expiry) {
   const match = String(expiry).trim().match(/^(\d+)([mhd])$/i);
@@ -20,6 +21,20 @@ function parseExpiryToMs(expiry) {
   if (unit === "m") return value * 60 * 1000;
   if (unit === "h") return value * 60 * 60 * 1000;
   return value * 24 * 60 * 60 * 1000;
+}
+
+function applyAuthCookies(res, accessToken, refreshToken) {
+  const base = cookieOptions();
+  const accessMaxAge = parseExpiryToMs(process.env.ACCESS_TOKEN_EXPIRES_IN || "15m");
+  const refreshMaxAge = parseExpiryToMs(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d");
+  res.cookie(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessMaxAge });
+  res.cookie(REFRESH_COOKIE, refreshToken, { ...base, maxAge: refreshMaxAge });
+}
+
+function clearAuthCookies(res) {
+  const base = cookieOptions();
+  res.clearCookie(ACCESS_COOKIE, base);
+  res.clearCookie(REFRESH_COOKIE, base);
 }
 
 async function register(req, res) {
@@ -47,7 +62,7 @@ async function register(req, res) {
 
   return res.status(201).json({
     message: "Register success",
-    user: publicUserPayload(user),
+    user: selfUserPayload(user),
   });
 }
 
@@ -82,16 +97,15 @@ async function login(req, res) {
     tokenHash: refreshTokenHash,
     expiresAt: new Date(Date.now() + refreshMs),
   });
+  applyAuthCookies(res, accessToken, refreshToken);
 
   return res.json({
-    accessToken,
-    refreshToken,
-    user: publicUserPayload(user),
+    user: selfUserPayload(user),
   });
 }
 
 async function refresh(req, res) {
-  const { refreshToken } = req.body;
+  const refreshToken = req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE] || "";
   if (!refreshToken) {
     return sendError(res, 400, "MISSING_REFRESH", "Thieu refresh token");
   }
@@ -114,25 +128,35 @@ async function refresh(req, res) {
     }
 
     const newAccessToken = signAccessToken(user);
-    return res.json({ accessToken: newAccessToken });
+    const newRefreshToken = signRefreshToken(user);
+    const newRefreshTokenHash = sha256(newRefreshToken);
+    const refreshMs = parseExpiryToMs(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d");
+
+    storedToken.tokenHash = newRefreshTokenHash;
+    storedToken.expiresAt = new Date(Date.now() + refreshMs);
+    await storedToken.save();
+
+    applyAuthCookies(res, newAccessToken, newRefreshToken);
+    return res.json({ ok: true });
   } catch (_error) {
     return sendError(res, 401, "INVALID_REFRESH", "Refresh token khong hop le");
   }
 }
 
 async function logout(req, res) {
-  const { refreshToken } = req.body;
+  const refreshToken = req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE] || "";
   if (!refreshToken) {
     return sendError(res, 400, "MISSING_REFRESH", "Thieu refresh token");
   }
 
   const refreshTokenHash = sha256(refreshToken);
   await RefreshToken.deleteOne({ tokenHash: refreshTokenHash });
+  clearAuthCookies(res);
   return res.json({ message: "Logout success" });
 }
 
 async function me(req, res) {
-  return res.json({ user: publicUserPayload(req.user) });
+  return res.json({ user: selfUserPayload(req.user) });
 }
 
 module.exports = {

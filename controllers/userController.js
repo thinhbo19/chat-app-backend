@@ -3,20 +3,22 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const Room = require("../models/Room");
 const { sendError } = require("../utils/apiError");
-const { publicUserPayload } = require("../utils/userPublic");
+const { selfUserPayload } = require("../utils/userPublic");
 const { hasMember } = require("../utils/roomMembers");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 async function searchUsers(req, res) {
   const q = String(req.query.q || "").trim();
   if (!q) {
     return res.json({ users: [] });
   }
+  const safeQuery = escapeRegex(q);
 
   const users = await User.find({
     _id: { $ne: req.user._id },
     $or: [
-      { username: { $regex: q, $options: "i" } },
-      { email: { $regex: q, $options: "i" } },
+      { username: { $regex: safeQuery, $options: "i" } },
+      { email: { $regex: safeQuery, $options: "i" } },
     ],
   })
     .select("username email avatar status lastSeenAt")
@@ -82,7 +84,7 @@ async function updateMyProfile(req, res) {
   user.phone = nextPhone;
   await user.save();
 
-  return res.json({ user: publicUserPayload(user) });
+  return res.json({ user: selfUserPayload(user) });
 }
 
 async function changeMyPassword(req, res) {
@@ -113,7 +115,7 @@ async function updateMyAvatar(req, res) {
   user.avatar = String(avatar).trim().slice(0, 500);
   await user.save();
 
-  return res.json({ user: publicUserPayload(user) });
+  return res.json({ user: selfUserPayload(user) });
 }
 
 async function patchChatRoomPrefs(req, res) {
@@ -147,7 +149,7 @@ async function patchChatRoomPrefs(req, res) {
   }
 
   await user.save();
-  return res.json({ user: publicUserPayload(user) });
+  return res.json({ user: selfUserPayload(user) });
 }
 
 module.exports = {

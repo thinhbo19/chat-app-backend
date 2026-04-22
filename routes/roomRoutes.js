@@ -23,6 +23,7 @@ const {
   searchRoomMessages,
 } = require("../controllers/roomController");
 const { requireAuth } = require("../middlewares/authMiddleware");
+const { chatReadLimiter } = require("../middlewares/rateLimit");
 const { validate } = require("../middlewares/validate");
 const {
   createRoomSchema,
@@ -47,8 +48,8 @@ const router = express.Router();
 router.use(requireAuth);
 router.post("/", validate(createRoomSchema), createRoom);
 router.patch("/:roomId", validate(updateGroupRoomSchema), updateGroupRoom);
-router.get("/my", getMyRooms);
-router.get("/unread-summary", getUnreadSummary);
+router.get("/my", chatReadLimiter, getMyRooms);
+router.get("/unread-summary", chatReadLimiter, getUnreadSummary);
 router.get("/group-invites/pending", listPendingGroupInvites);
 router.post(
   "/group-invites/:inviteId/accept",
@@ -64,10 +65,11 @@ router.post("/direct/:friendUserId", validate(directRoomParamsSchema), getOrCrea
 router.get("/:roomId/read-state", validate(roomIdParamsSchema), getRoomReadStates);
 router.get(
   "/:roomId/messages/search",
+  chatReadLimiter,
   validate(searchRoomMessagesQuerySchema),
   searchRoomMessages,
 );
-router.get("/:roomId/messages", validate(getRoomMessagesQuerySchema), getRoomMessages);
+router.get("/:roomId/messages", chatReadLimiter, validate(getRoomMessagesQuerySchema), getRoomMessages);
 router.post(
   "/:roomId/messages/:messageId/reaction",
   validate(messageReactionSchema),
