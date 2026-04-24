@@ -5,6 +5,7 @@ const Room = require("../models/Room");
 const Message = require("../models/Message");
 const { ensureDirectRoomForUsers, buildDirectKey } = require("../utils/room");
 const { sendError } = require("../utils/apiError");
+const { invalidateUsersChatCache } = require("../utils/chatCache");
 
 function meId(req) {
   return req.user && req.user._id ? req.user._id : null;
@@ -50,6 +51,7 @@ async function sendFriendRequest(req, res) {
     io.to(`user:${toUserId}`).emit("room_list_changed", {
       roomId: directRoom._id.toString(),
     });
+    await invalidateUsersChatCache([myId.toString(), String(toUserId)]);
     return res.json({
       message: "Friend request auto accepted",
       request: reversePending,
@@ -171,6 +173,7 @@ async function acceptFriendRequest(req, res) {
   io.to(`user:${request.toUserId.toString()}`).emit("room_list_changed", {
     roomId: directRoom._id.toString(),
   });
+  await invalidateUsersChatCache([request.fromUserId.toString(), request.toUserId.toString()]);
 
   return res.json({ message: "Friend request accepted", request });
 }
@@ -284,6 +287,7 @@ async function removeFriend(req, res) {
       roomId: directRoom._id.toString(),
     });
   }
+  await invalidateUsersChatCache([myId.toString(), String(friendUserId)]);
 
   return res.json({ message: "Friend removed successfully" });
 }

@@ -6,6 +6,7 @@ const { sendError } = require("../utils/apiError");
 const { selfUserPayload } = require("../utils/userPublic");
 const { hasMember } = require("../utils/roomMembers");
 const { escapeRegex } = require("../utils/escapeRegex");
+const { invalidateUserChatCache } = require("../utils/chatCache");
 
 async function searchUsers(req, res) {
   const q = String(req.query.q || "").trim();
@@ -149,6 +150,7 @@ async function patchChatRoomPrefs(req, res) {
   }
 
   await user.save();
+  await invalidateUserChatCache(req.user.id);
   return res.json({ user: selfUserPayload(user) });
 }
 

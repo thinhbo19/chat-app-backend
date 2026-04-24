@@ -38,6 +38,8 @@ function setupRefreshControllerMocks({
   findUserByQuery = async () => userDoc,
   verifyRefreshTokenImpl,
   deleteOneImpl = async () => ({ deletedCount: 1 }),
+  deleteManyImpl = async () => ({ deletedCount: 1 }),
+  createImpl = async () => ({ _id: "rt1" }),
 } = {}) {
   const authControllerPath = require.resolve("../controllers/authController");
   const userModelPath = require.resolve("../models/User");
@@ -72,6 +74,8 @@ function setupRefreshControllerMocks({
   const refreshTokenModel = {
     findOne: async () => storedTokenDoc,
     deleteOne: deleteOneImpl,
+    deleteMany: deleteManyImpl,
+    create: createImpl,
   };
 
   require.cache[userModelPath] = { exports: userModel };

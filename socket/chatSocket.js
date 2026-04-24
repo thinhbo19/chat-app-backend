@@ -5,6 +5,7 @@ const User = require("../models/User");
 const FriendRequest = require("../models/FriendRequest");
 const { formatMessageDoc } = require("../utils/formatChatMessage");
 const { markRoomReadAndBroadcast } = require("../services/roomReadService");
+const { invalidateUsersChatCache, invalidateUserChatCache } = require("../utils/chatCache");
 
 const userSocketCounts = new Map();
 
@@ -184,6 +185,7 @@ function registerChatSocket(io) {
         io.to(`user:${mid}`).emit("receive_message", message);
         io.to(`user:${mid}`).emit("room_list_changed");
       }
+      await invalidateUsersChatCache([...recipientIds]);
       callback?.({ ok: true });
     });
 
@@ -203,6 +205,7 @@ function registerChatSocket(io) {
         callback?.({ ok: false, error: result.error || "mark_room_read failed" });
         return;
       }
+      await invalidateUserChatCache(userId.toString());
       callback?.({ ok: true });
     });
 

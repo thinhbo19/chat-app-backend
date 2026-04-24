@@ -11,6 +11,16 @@ const { sendError } = require("../utils/apiError");
 const { hasMember, emitToRoomMembers } = require("../utils/roomMembers");
 const { markRoomReadAndBroadcast } = require("../services/roomReadService");
 const { escapeRegex } = require("../utils/escapeRegex");
+const {
+  getJsonCache,
+  setJsonCache,
+  roomsKey,
+  unreadSummaryKey,
+  ROOM_LIST_TTL_SEC,
+  UNREAD_SUMMARY_TTL_SEC,
+  invalidateUsersChatCache,
+  invalidateUserChatCache,
+} = require("../utils/chatCache");
 
 const MAX_PINNED_MESSAGES_PER_ROOM = 3;
 
@@ -42,20 +52,33 @@ async function createRoom(req, res) {
     "members.userId",
     "username email avatar status lastSeenAt",
   );
+  await invalidateUsersChatCache(Array.from(membersSet));
   return res.status(201).json({ room: populated });
 }
 
 async function getMyRooms(req, res) {
+  const cacheKey = roomsKey(req.user._id);
+  const cached = await getJsonCache(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
   const rooms = await Room.find({
     $or: [{ "members.userId": req.user._id }, { members: req.user._id }],
   })
     .sort({ updatedAt: -1 })
     .populate("members.userId", "username email avatar status lastSeenAt");
-  return res.json({ rooms });
+  const payload = { rooms };
+  await setJsonCache(cacheKey, payload, ROOM_LIST_TTL_SEC);
+  return res.json(payload);
 }
 
 async function getUnreadSummary(req, res) {
   const userId = req.user._id;
+  const cacheKey = unreadSummaryKey(userId);
+  const cached = await getJsonCache(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
   const roomDocs = await Room.find({
     $or: [{ "members.userId": userId }, { members: userId }],
   })
@@ -65,7 +88,9 @@ async function getUnreadSummary(req, res) {
   const roomIds = roomDocs.map((room) => room._id);
   const counts = Object.fromEntries(roomIds.map((id) => [id.toString(), 0]));
   if (roomIds.length === 0) {
-    return res.json({ counts });
+    const payload = { counts };
+    await setJsonCache(cacheKey, payload, UNREAD_SUMMARY_TTL_SEC);
+    return res.json(payload);
   }
 
   const states = await RoomReadState.find({
@@ -121,7 +146,9 @@ async function getUnreadSummary(req, res) {
   for (const item of aggregateResults) {
     counts[item._id.toString()] = Math.min(item.count, 999);
   }
-  return res.json({ counts });
+  const payload = { counts };
+  await setJsonCache(cacheKey, payload, UNREAD_SUMMARY_TTL_SEC);
+  return res.json(payload);
 }
 
 async function joinRoom(req, res) {
@@ -139,6 +166,7 @@ async function joinRoom(req, res) {
   if (!exists) {
     room.members.push({ userId: req.user._id, role: "member" });
     await room.save();
+    await invalidateUsersChatCache(room.members.map((member) => member.userId.toString()));
   }
 
   return res.json({ room });
@@ -184,6 +212,7 @@ async function updateMemberRole(req, res) {
       });
     });
   }
+  await invalidateUsersChatCache(populatedRoom.members.map((member) => member.userId._id.toString()));
 
   return res.json({ message: "Member role updated", room: populatedRoom });
 }
@@ -237,6 +266,7 @@ async function updateGroupRoom(req, res) {
       });
     });
   }
+  await invalidateUsersChatCache(populated.members.map((member) => member.userId._id.toString()));
 
   return res.json({ room: populated });
 }
@@ -389,6 +419,7 @@ async function acceptGroupInvite(req, res) {
   const roomIdStr = room._id.toString();
   const memberIds = room.members.map((m) => m.userId.toString());
   emitRoomListChangedToUsers(io, roomIdStr, memberIds);
+  await invalidateUsersChatCache(memberIds);
 
   const populatedRoom = await Room.findById(room._id).populate(
     "members.userId",
@@ -460,6 +491,7 @@ async function leaveGroup(req, res) {
     room.members = room.members.filter((m) => m.userId.toString() !== myId);
     await room.save();
     emitRoomListChangedToUsers(io, roomIdStr, [...beforeIds]);
+    await invalidateUsersChatCache(beforeIds);
     return res.json({ ok: true });
   }
 
@@ -497,6 +529,7 @@ async function leaveGroup(req, res) {
 
   const afterIds = room.members.map((m) => m.userId.toString());
   emitRoomListChangedToUsers(io, roomIdStr, [...afterIds, myId]);
+  await invalidateUsersChatCache([...afterIds, myId]);
 
   return res.json({ ok: true });
 }
@@ -543,6 +576,7 @@ async function removeMemberFromGroup(req, res) {
 
   const io = req.app.get("io");
   emitRoomListChangedToUsers(io, room._id.toString(), beforeIds);
+  await invalidateUsersChatCache(beforeIds);
 
   const populatedRoom = await Room.findById(room._id).populate(
     "members.userId",
@@ -738,6 +772,7 @@ async function pinRoomMessage(req, res) {
       if (mid) io.to(`user:${mid}`).emit("room_list_changed", { roomId: room._id.toString() });
     });
   }
+  await invalidateUsersChatCache(populatedRoom.members.map((member) => member.userId._id.toString()));
 
   return res.json({
     pinnedMessageIds: payload.pinnedMessageIds,
@@ -781,6 +816,7 @@ async function unpinRoomMessage(req, res) {
       if (mid) io.to(`user:${mid}`).emit("room_list_changed", { roomId: room._id.toString() });
     });
   }
+  await invalidateUsersChatCache(populatedRoom.members.map((member) => member.userId._id.toString()));
 
   return res.json({
     pinnedMessageIds: payload.pinnedMessageIds,
@@ -848,6 +884,7 @@ async function markRoomRead(req, res) {
     }
     return sendError(res, 400, "MARK_READ_FAILED", result.error || "Loi cap nhat da doc");
   }
+  await invalidateUserChatCache(req.user.id);
   return res.json({ ok: true });
 }
 
@@ -891,6 +928,7 @@ async function getOrCreateDirectRoom(req, res) {
   }
 
   const room = await ensureDirectRoomForUsers(req.user.id, friendUserId);
+  await invalidateUsersChatCache([req.user.id, friendUserId]);
   return res.json({ room });
 }
 

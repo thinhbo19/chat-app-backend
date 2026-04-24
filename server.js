@@ -16,6 +16,8 @@ const { ACCESS_COOKIE, parseCookieHeader } = require("./utils/authCookies");
 const { sendError } = require("./utils/apiError");
 const { registerChatSocket } = require("./socket/chatSocket");
 const { logger } = require("./utils/logger");
+const { initCacheClient, isCacheReady } = require("./utils/cacheClient");
+const { getCacheStats } = require("./utils/chatCache");
 
 const authRoutes = require("./routes/authRoutes");
 const roomRoutes = require("./routes/roomRoutes");
@@ -75,6 +77,8 @@ app.get("/health", async (_req, res) => {
       return res.status(503).json({
         status: "degraded",
         mongo: "no_db",
+        redis: isCacheReady() ? "connected" : "disabled_or_disconnected",
+        cache: getCacheStats(),
         mongoState: ready,
         uptime: process.uptime(),
       });
@@ -83,6 +87,8 @@ app.get("/health", async (_req, res) => {
     return res.json({
       status: "ok",
       mongo: "connected",
+      redis: isCacheReady() ? "connected" : "disabled_or_disconnected",
+      cache: getCacheStats(),
       mongoState: ready,
       uptime: process.uptime(),
     });
@@ -91,6 +97,8 @@ app.get("/health", async (_req, res) => {
     return res.status(503).json({
       status: "error",
       mongo: "unreachable",
+      redis: isCacheReady() ? "connected" : "disabled_or_disconnected",
+      cache: getCacheStats(),
       mongoState: ready,
       uptime: process.uptime(),
     });
@@ -170,6 +178,7 @@ mongoose
     } catch (error) {
       logger.warn("mongo.refresh_sync_indexes", { message: error.message });
     }
+    await initCacheClient();
     server.listen(PORT, "0.0.0.0", () => {
       logger.info("server.listen", { port: PORT, bind: "0.0.0.0" });
     });
